@@ -1,6 +1,7 @@
 'use strict';
 
 const { crearError } = require('../middlewares/errores');
+const { usuarioActual } = require('../config/identidad');
 const { procesarChat } = require('../services/chat.service');
 
 async function postChat(req, res, next) {
@@ -15,10 +16,10 @@ async function postChat(req, res, next) {
   }
 
   try {
-    const usuario = req.user ?? { id: 1, nombre: 'Ana García', rol: 'RRHH' };
+    const usuario = req.user ?? usuarioActual();
     return res.json(await procesarChat({ pregunta, usuario }));
   } catch (error) {
-    process.stderr.write(`[CHAT] ${error.stack || error.message}\n`);
+    process.stderr.write(`[CHAT] ${error.message}\n`);
     return next(error);
   }
 }

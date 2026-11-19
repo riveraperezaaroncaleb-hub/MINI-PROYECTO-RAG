@@ -7,6 +7,8 @@ import {
   serializarVectorDocumento,
   TOTAL_DOCUMENTOS
 } from './voyageDocsService.js';
+import { superaUmbral, TIMEOUT_EXTERNO_MS } from '../config/rag.js';
+import { derivarSiSinRespaldo } from './ragService.js';
 
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com';
 const DEEPSEEK_CHAT_URL = `${DEEPSEEK_BASE_URL.replace(/\/$/, '')}/chat/completions`;
@@ -35,10 +37,11 @@ export async function recuperarFragmentos(pregunta, opciones = {}) {
       `SELECT doc_id,
               canal,
               documento_nombre,
-              documento_url,
-              titulo,
-              contenido,
-              1 - (embedding <=> $1::vector) AS similitud
+               documento_url,
+               titulo,
+               chunk_index,
+               contenido,
+               1 - (embedding <=> $1::vector) AS similitud
        FROM documentos_voyage
        WHERE doc_id = ANY($2::int[])
        ORDER BY embedding <=> $1::vector ASC
@@ -49,15 +52,18 @@ export async function recuperarFragmentos(pregunta, opciones = {}) {
     rows = await buscarFragmentosLocales(embedding, topK);
   }
 
-  return rows.map((fila) => ({
-    docId: Number(fila.doc_id),
-    canal: fila.canal,
-    documento: fila.documento_nombre,
-    url: fila.documento_url ?? null,
-    seccion: fila.titulo ?? null,
-    contenido: fila.contenido,
-    similitud: Number(fila.similitud ?? 0)
-  }));
+  return rows
+    .filter((fila) => superaUmbral(fila.similitud))
+    .map((fila) => ({
+      docId: Number(fila.doc_id),
+      canal: fila.canal,
+      documento: fila.documento_nombre,
+      url: fila.documento_url ?? null,
+      seccion: fila.titulo ?? null,
+      chunk_index: fila.chunk_index ?? null,
+      contenido: fila.contenido,
+      similitud: Number(fila.similitud ?? 0)
+    }));
 }
 
 function construirContexto(fragmentos) {
@@ -82,6 +88,8 @@ export function construirCitas(fragmentos) {
       documento: fragmento.documento,
       url: fragmento.url,
       seccion: fragmento.seccion,
+      chunk_index: fragmento.chunk_index ?? null,
+      drive_url: fragmento.url ?? null,
       similitud: fragmento.similitud
     });
   }
@@ -106,7 +114,8 @@ async function llamarDeepSeek(mensajes) {
       messages: mensajes,
       temperature: 0,
       stream: false
-    })
+    }),
+    signal: AbortSignal.timeout(TIMEOUT_EXTERNO_MS)
   });
 
   if (!respuesta.ok) {
@@ -124,18 +133,7 @@ async function llamarDeepSeek(mensajes) {
   return contenido.trim();
 }
 
-function construirMensajes(texto, fragmentos, historial) {
-  const previos = Array.isArray(historial)
-    ? historial
-        .filter((mensaje) =>
-          ['user', 'assistant'].includes(mensaje?.role) &&
-          typeof mensaje?.content === 'string' &&
-          mensaje.content.trim()
-        )
-        .slice(-6)
-        .map((mensaje) => ({ role: mensaje.role, content: mensaje.content.trim() }))
-    : [];
-
+function construirMensajes(texto, fragmentos) {
   return [
     {
       role: 'system',
@@ -150,7 +148,6 @@ function construirMensajes(texto, fragmentos, historial) {
         '"No encontré información en los documentos para esta consulta."'
       ].join(' ')
     },
-    ...previos,
     {
       role: 'user',
       content: [
@@ -172,20 +169,16 @@ export async function responderChat(pregunta, opciones = {}) {
   const fragmentos = await recuperarFragmentos(texto, opciones);
 
   if (fragmentos.length === 0) {
-    return {
-      respuesta: 'No encontré información en los documentos para esta consulta.',
-      citas: [],
-      fragmentos: []
-    };
+    return derivarSiSinRespaldo({ respuesta: '', citas: [], fragmentos: [] });
   }
 
-  const respuesta = await llamarDeepSeek(construirMensajes(texto, fragmentos, opciones.historial));
+  const respuesta = await llamarDeepSeek(construirMensajes(texto, fragmentos));
 
-  return {
+  return derivarSiSinRespaldo({
     respuesta,
     citas: construirCitas(fragmentos),
     fragmentos
-  };
+  });
 }
 
 export default responderChat;

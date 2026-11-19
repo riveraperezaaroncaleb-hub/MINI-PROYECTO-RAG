@@ -11,14 +11,19 @@ function iniciarReporteDiario() {
     return tarea;
   }
 
-  tarea = cron.schedule('0 7 * * *', async () => {
-    try {
-      await generarReporteDiario();
-      ultimoError = null;
-    } catch (error) {
-      ultimoError = error;
-    }
-  });
+  tarea = cron.schedule(
+    '0 7 * * *',
+    async () => {
+      try {
+        await generarReporteDiario();
+        ultimoError = null;
+      } catch (error) {
+        ultimoError = error;
+        process.stderr.write(`[REPORTE] ${error.message}\n`);
+      }
+    },
+    { timezone: 'America/Costa_Rica' }
+  );
 
   return tarea;
 }

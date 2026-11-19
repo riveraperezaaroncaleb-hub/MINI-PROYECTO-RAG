@@ -1,7 +1,6 @@
 'use strict';
 
-const { Op } = require('sequelize');
-const { Usuario, Solicitud, Incapacidad, MovimientoPersonal } = require('../models');
+const { sequelize } = require('../models');
 const { leerJson } = require('./almacen.service');
 
 function aIso(fecha) {
@@ -26,16 +25,6 @@ function numero(valor) {
   return Number(valor || 0);
 }
 
-function finIncapacidad(incapacidad) {
-  const fin = new Date(`${incapacidad.fecha_inicio}T00:00:00Z`);
-  fin.setUTCDate(fin.getUTCDate() + numero(incapacidad.dias) - 1);
-  return aIso(fin);
-}
-
-function departamentoDe(registro) {
-  return registro.colaborador?.departamento || 'Sin departamento';
-}
-
 function topConteos(registros, clave, limite = 5) {
   const conteos = new Map();
 
@@ -51,102 +40,99 @@ function topConteos(registros, clave, limite = 5) {
 }
 
 async function ausentesHoy({ hoy }) {
-  const [solicitudes, incapacidades] = await Promise.all([
-    Solicitud.findAll({
-      where: {
-        estado: 'Aprobada',
-        tipo: { [Op.in]: ['Vacaciones', 'Permiso'] },
-        fecha_inicio: { [Op.lte]: hoy },
-        fecha_fin: { [Op.gte]: hoy }
-      },
-      include: [{ model: Usuario, as: 'colaborador', attributes: ['departamento'] }]
-    }),
-    Incapacidad.findAll({
-      include: [{ model: Usuario, as: 'colaborador', attributes: ['departamento'] }]
-    })
-  ]);
-
-  const activas = incapacidades.filter(
-    (item) => item.fecha_inicio <= hoy && finIncapacidad(item) >= hoy
+  const [filas] = await sequelize.query(
+    `SELECT departamento,
+            SUM(tipo = 'Vacaciones') AS vacaciones,
+            SUM(tipo = 'Permiso') AS permisos,
+            SUM(tipo = 'Incapacidad') AS incapacidades,
+            COUNT(DISTINCT colaborador_id) AS total
+     FROM (
+       SELECT COALESCE(u.departamento, 'Sin departamento') AS departamento,
+              s.colaborador_id, s.tipo
+       FROM solicitudes s
+       JOIN Usuarios u ON u.id = s.colaborador_id
+       WHERE s.estado = 'Aprobada'
+         AND s.tipo IN ('Vacaciones', 'Permiso')
+         AND s.fecha_inicio <= :hoy
+         AND s.fecha_fin >= :hoy
+       UNION ALL
+       SELECT COALESCE(u.departamento, 'Sin departamento') AS departamento,
+              i.colaborador_id, 'Incapacidad' AS tipo
+       FROM incapacidades i
+       JOIN Usuarios u ON u.id = i.colaborador_id
+       WHERE i.fecha_inicio <= :hoy
+         AND DATE_ADD(i.fecha_inicio, INTERVAL i.dias - 1 DAY) >= :hoy
+     } AS ausentes
+     GROUP BY departamento
+     ORDER BY total DESC`,
+    { replacements: { hoy } }
   );
 
-  const departamentos = new Set([
-    ...solicitudes.map(departamentoDe),
-    ...activas.map(departamentoDe)
-  ]);
-
-  const porDepartamento = [...departamentos]
-    .map((departamento) => {
-      const sols = solicitudes.filter((item) => departamentoDe(item) === departamento);
-      const incs = activas.filter((item) => departamentoDe(item) === departamento);
-
-      return {
-        departamento,
-        vacaciones: sols.filter((item) => item.tipo === 'Vacaciones').length,
-        permisos: sols.filter((item) => item.tipo === 'Permiso').length,
-        incapacidades: incs.length,
-        total: new Set([
-          ...sols.map((item) => item.colaborador_id),
-          ...incs.map((item) => item.colaborador_id)
-        ]).size
-      };
-    })
-    .sort((a, b) => b.total - a.total);
-
   return {
-    total: new Set([
-      ...solicitudes.map((item) => item.colaborador_id),
-      ...activas.map((item) => item.colaborador_id)
-    ]).size,
-    vacaciones: solicitudes.filter((item) => item.tipo === 'Vacaciones').length,
-    permisos: solicitudes.filter((item) => item.tipo === 'Permiso').length,
-    incapacidades: activas.length,
-    porDepartamento
+    total: filas.reduce((suma, fila) => suma + numero(fila.total), 0),
+    vacaciones: filas.reduce((suma, fila) => suma + numero(fila.vacaciones), 0),
+    permisos: filas.reduce((suma, fila) => suma + numero(fila.permisos), 0),
+    incapacidades: filas.reduce((suma, fila) => suma + numero(fila.incapacidades), 0),
+    porDepartamento: filas.map((fila) => ({
+      departamento: fila.departamento,
+      vacaciones: numero(fila.vacaciones),
+      permisos: numero(fila.permisos),
+      incapacidades: numero(fila.incapacidades),
+      total: numero(fila.total)
+    }))
   };
 }
 
 async function solicitudesPendientes() {
-  const pendientes = await Solicitud.findAll({
-    where: { estado: 'Pendiente' },
-    attributes: ['creada_en']
-  });
+  const limite = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+  const [filas] = await sequelize.query(
+    `SELECT COUNT(*) AS total,
+            SUM(creada_en < :limite) AS masDeTresDias
+     FROM solicitudes
+     WHERE estado = 'Pendiente'`,
+    { replacements: { limite } }
+  );
 
-  const limite = Date.now() - 3 * 24 * 60 * 60 * 1000;
-
-  return {
-    total: pendientes.length,
-    masDeTresDias: pendientes.filter(
-      (item) => new Date(item.creada_en).getTime() < limite
-    ).length
-  };
+  const fila = filas[0] ?? {};
+  return { total: numero(fila.total), masDeTresDias: numero(fila.masDeTresDias) };
 }
 
 async function incapacidadesDelMes({ hoy, inicioMes, inicioMesSiguiente }) {
-  const registros = await Incapacidad.findAll({ attributes: ['fecha_inicio', 'dias'] });
+  const [filas] = await sequelize.query(
+    `SELECT SUM(fecha_inicio <= :hoy
+                 AND DATE_ADD(fecha_inicio, INTERVAL dias - 1 DAY) >= :hoy) AS activas,
+            SUM(CASE
+                  WHEN fecha_inicio < :inicioMesSiguiente
+                   AND DATE_ADD(fecha_inicio, INTERVAL dias - 1 DAY) >= :inicioMes
+                  THEN dias ELSE 0
+                END) AS diasAcumuladosMes
+     FROM incapacidades`,
+    { replacements: { hoy, inicioMes, inicioMesSiguiente } }
+  );
 
+  const fila = filas[0] ?? {};
   return {
-    activas: registros.filter(
-      (item) => item.fecha_inicio <= hoy && finIncapacidad(item) >= hoy
-    ).length,
-    diasAcumuladosMes: registros
-      .filter((item) => item.fecha_inicio >= inicioMes && item.fecha_inicio < inicioMesSiguiente)
-      .reduce((suma, item) => suma + numero(item.dias), 0)
+    activas: numero(fila.activas),
+    diasAcumuladosMes: numero(fila.diasAcumuladosMes)
   };
 }
 
 async function movimientosDelMes({ inicioMes, inicioMesSiguiente }) {
-  const [movimientos, colaboradoresActivos] = await Promise.all([
-    MovimientoPersonal.findAll({
-      where: { fecha: { [Op.gte]: inicioMes, [Op.lt]: inicioMesSiguiente } },
-      attributes: ['tipo']
-    }),
-    Usuario.count({ where: { rol: 'colaborador' } })
-  ]);
+  const [filas] = await sequelize.query(
+    `SELECT SUM(tipo = 'Alta') AS ingresos,
+            SUM(tipo = 'Baja') AS salidas,
+            (SELECT COUNT(*) FROM Usuarios WHERE rol = 'colaborador') AS colaboradoresActivos
+     FROM movimientos_personal
+     WHERE fecha >= :inicioMes AND fecha < :inicioMesSiguiente`,
+    { replacements: { inicioMes, inicioMesSiguiente } }
+  );
 
-  const salidas = movimientos.filter((item) => item.tipo === 'Baja').length;
+  const fila = filas[0] ?? {};
+  const salidas = numero(fila.salidas);
+  const colaboradoresActivos = numero(fila.colaboradoresActivos);
 
   return {
-    ingresos: movimientos.filter((item) => item.tipo === 'Alta').length,
+    ingresos: numero(fila.ingresos),
     salidas,
     colaboradoresActivos,
     rotacionPorcentaje: colaboradoresActivos
@@ -156,7 +142,20 @@ async function movimientosDelMes({ inicioMes, inicioMesSiguiente }) {
 }
 
 async function usoDelChatbot({ ayer, hoy }) {
-  const registros = await leerJson('consultas_chat.json', []);
+  let registros;
+
+  try {
+    const [filas] = await sequelize.query(
+      `SELECT fecha, resuelta, latencia_ms, intencion, pregunta
+       FROM consultas_chat
+       WHERE fecha >= :ayer AND fecha < :hoy`,
+      { replacements: { ayer, hoy } }
+    );
+    registros = filas;
+  } catch {
+    registros = await leerJson('consultas_chat.json', []);
+  }
+
   const delPeriodo = (Array.isArray(registros) ? registros : []).filter((registro) => {
     const fecha = String(registro.fecha || '').slice(0, 10);
     return fecha >= ayer && fecha < hoy;

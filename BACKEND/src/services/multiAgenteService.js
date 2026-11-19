@@ -1,9 +1,9 @@
 import 'dotenv/config';
-import {
-  buscarFragmentosPorSimilitud,
-  generarEmbeddings,
-  normalizarArea
-} from './ingestaService.js';
+import { buscarFragmentosPorSimilitud, generarEmbeddings } from './ingestaService.js';
+import { normalizarArea, normalizarAreaClasificador } from '../utils/areas.js';
+import { TIMEOUT_EXTERNO_MS } from '../config/rag.js';
+import { derivarSiSinRespaldo } from './orquestadorService.js';
+import { buscarFragmentosLocales } from './voyageDocsService.js';
 
 /** Endpoint y modelo exigidos para la orquestación con DeepSeek. */
 const DEEPSEEK_CHAT_URL = 'https://api.deepseek.com/chat/completions';
@@ -17,49 +17,7 @@ const INTENCIONES = new Set([
   'RESTRINGIDA',
   'FUERA_ALCANCE'
 ]);
-const AREAS = new Set([
-  'RRHH',
-  'TECNOLOGIA',
-  'FINANCIAS',
-  'VENTAS',
-  'LEGAL',
-  'OPERACIONES',
-  'GENERAL'
-]);
 const INTENCIONES_SIN_RECUPERACION = new Set(['RESTRINGIDA', 'FUERA_ALCANCE']);
-
-/** Alias comunes para normalizar el área devuelta por el clasificador. */
-const ALIAS_AREAS = new Map([
-  ['RECURSOS HUMANOS', 'RRHH'],
-  ['RECURSOS_HUMANOS', 'RRHH'],
-  ['PERSONAL', 'RRHH'],
-  ['TI', 'TECNOLOGIA'],
-  ['TECNOLOGIA', 'TECNOLOGIA'],
-  ['FINANCIERO', 'FINANCIAS'],
-  ['FINANCIERA', 'FINANCIAS'],
-  ['FINANZAS', 'FINANCIAS'],
-  ['COMERCIAL', 'VENTAS'],
-  ['JURIDICO', 'LEGAL'],
-  ['COMPRAS', 'OPERACIONES'],
-  ['OPERACIONES', 'OPERACIONES']
-]);
-
-/**
- * Convierte texto libre a un área permitida por el sistema.
- * @param {string} valor Área propuesta.
- * @returns {string} Área normalizada o GENERAL.
- */
-function normalizarAreaClasificador(valor) {
-  const texto = String(valor ?? '')
-    .trim()
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, '_');
-
-  const alias = ALIAS_AREAS.get(texto) ?? ALIAS_AREAS.get(texto.replace(/_/g, ' ')) ?? texto;
-  return AREAS.has(alias) ? alias : 'GENERAL';
-}
 
 /**
  * Extrae un objeto JSON de una respuesta del modelo, incluso si viene entre bloques Markdown.
@@ -109,7 +67,8 @@ async function llamarDeepSeek(mensajes, { json = false } = {}) {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`
     },
-    body: JSON.stringify(cuerpo)
+    body: JSON.stringify(cuerpo),
+    signal: AbortSignal.timeout(TIMEOUT_EXTERNO_MS)
   });
 
   if (!respuesta.ok) {
@@ -196,6 +155,8 @@ function construirContexto(fragmentos) {
         `[${indice + 1}] Documento fuente: ${fragmento.documento_nombre ?? 'No indicado'}`,
         `Área: ${fragmento.area ?? 'No indicada'}`,
         `Sección: ${fragmento.titulo ?? 'No indicada'}`,
+        `Chunk: ${fragmento.chunk_index ?? 'No indicado'}`,
+        `URL: ${fragmento.documento_url ?? 'No indicada'}`,
         `Similitud: ${similitud}`,
         `Contenido: ${fragmento.contenido}`
       ].join('\n');
@@ -214,9 +175,19 @@ function construirCitas(fragmentos) {
     documento: fragmento.documento_nombre ?? 'Documento fuente no indicado',
     area: fragmento.area ?? null,
     seccion: fragmento.titulo ?? null,
-    url: fragmento.documento_url ?? null,
+    chunk_index: fragmento.chunk_index ?? null,
+    drive_url: fragmento.documento_url ?? null,
     similitud: Number(fragmento.similitud ?? 0)
   }));
+}
+
+function citasUsadas(respuesta, fragmentos) {
+  const numeros = new Set(
+    [...String(respuesta ?? '').matchAll(/\[(\d+)\]/g)].map((coincidencia) => Number(coincidencia[1]))
+  );
+  if (!numeros.size) return [];
+
+  return construirCitas(fragmentos).filter((cita) => numeros.has(cita.numero));
 }
 
 /**
@@ -229,12 +200,16 @@ function construirCitas(fragmentos) {
 async function recuperarFragmentos(consulta, area, opciones = {}) {
   const [embedding] = await generarEmbeddings([consulta], { inputType: 'query' });
 
-  return buscarFragmentosPorSimilitud({
-    embedding,
-    area: area === 'GENERAL' ? '' : normalizarArea(area),
-    empresaId: opciones.empresaId,
-    topK: opciones.topK ?? 5
-  });
+  try {
+    return await buscarFragmentosPorSimilitud({
+      embedding,
+      area: area === 'GENERAL' ? '' : normalizarArea(area),
+      empresaId: opciones.empresaId,
+      topK: opciones.topK ?? 5
+    });
+  } catch {
+    return buscarFragmentosLocales(embedding, opciones.topK ?? 5);
+  }
 }
 
 /**
@@ -301,23 +276,31 @@ export async function consultarMultiAgente(pregunta, opciones = {}) {
   };
 
   if (INTENCIONES_SIN_RECUPERACION.has(clasificacion.intencion)) {
-    return {
+    if (clasificacion.intencion === 'RESTRINGIDA') {
+      return {
+        ...resultadoBase,
+        respuesta: respuestaSinRecuperacion(clasificacion.intencion),
+        citas: [],
+        fragmentos: []
+      };
+    }
+    return derivarSiSinRespaldo({
       ...resultadoBase,
       respuesta: respuestaSinRecuperacion(clasificacion.intencion),
       citas: [],
       fragmentos: []
-    };
+    });
   }
 
   const fragmentos = await recuperarFragmentos(clasificacion.consulta, area, opciones);
 
   if (!fragmentos.length) {
-    return {
+    return derivarSiSinRespaldo({
       ...resultadoBase,
-      respuesta: 'No encontré información en los documentos para esta consulta.',
+      respuesta: '',
       citas: [],
       fragmentos: []
-    };
+    });
   }
 
   const respuesta = await responderComoEspecialista({
@@ -327,12 +310,12 @@ export async function consultarMultiAgente(pregunta, opciones = {}) {
     fragmentos
   });
 
-  return {
+  return derivarSiSinRespaldo({
     ...resultadoBase,
     respuesta,
-    citas: construirCitas(fragmentos),
+    citas: citasUsadas(respuesta, fragmentos),
     fragmentos
-  };
+  });
 }
 
 export const procesarConsulta = consultarMultiAgente;

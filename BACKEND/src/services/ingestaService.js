@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import pg from 'pg';
+import { normalizarArea as normalizarAreaCatalogo } from '../utils/areas.js';
+import { TIMEOUT_EXTERNO_MS, UMBRAL_SIMILITUD } from '../config/rag.js';
 
 const { Pool } = pg;
 
@@ -39,11 +41,7 @@ function obtenerCadenaConexion() {
  * @returns {string} Área normalizada.
  */
 export function normalizarArea(area) {
-  const valor = String(area ?? '').trim().toUpperCase();
-  if (!valor) {
-    throw new Error('El área es obligatoria para ingestar documentos en fragmentos_rag.');
-  }
-  return valor;
+  return normalizarAreaCatalogo(area);
 }
 
 /**
@@ -80,8 +78,9 @@ export function extraerIdArchivoGoogleDrive(valor) {
  * @param {Response} respuesta Respuesta HTTP fallida.
  * @returns {Promise<Error>} Error listo para lanzar.
  */
-async function errorDeRespuesta(origen, respuesta) {
-  const detalle = (await respuesta.text().catch(() => '')).slice(0, 500);
+async function errorDeRespuesta(origen, respuesta, detalleLeido = null) {
+  const detalle =
+    detalleLeido ?? (await respuesta.text().catch(() => '')).slice(0, 500);
   return new Error(`${origen} respondió con el estado ${respuesta.status}. ${detalle}`.trim());
 }
 
@@ -120,7 +119,10 @@ export async function leerMarkdownDeGoogleDrive({
   );
   const cabeceras = token ? { Authorization: `Bearer ${token}` } : {};
 
-  const respuestaContenido = await fetch(urlContenido, { headers: cabeceras });
+  const respuestaContenido = await fetch(urlContenido, {
+    headers: cabeceras,
+    signal: AbortSignal.timeout(TIMEOUT_EXTERNO_MS)
+  });
   if (!respuestaContenido.ok) throw await errorDeRespuesta('Google Drive', respuestaContenido);
 
   const contenido = await respuestaContenido.text();
@@ -130,7 +132,10 @@ export async function leerMarkdownDeGoogleDrive({
 
   let metadatos = {};
   try {
-    const respuestaMetadatos = await fetch(urlMetadatos, { headers: cabeceras });
+    const respuestaMetadatos = await fetch(urlMetadatos, {
+      headers: cabeceras,
+      signal: AbortSignal.timeout(TIMEOUT_EXTERNO_MS)
+    });
     if (respuestaMetadatos.ok) metadatos = await respuestaMetadatos.json();
   } catch {
     metadatos = {};
@@ -270,7 +275,9 @@ export async function generarEmbeddings(textos, { inputType = 'document' } = {})
     const lote = textos.slice(inicio, inicio + LOTE_EMBEDDINGS);
     let respuesta;
 
-    for (let intento = 0; intento <= 4; intento += 1) {
+    let detalleError = null;
+
+    for (let intento = 0; intento <= 2; intento += 1) {
       respuesta = await fetch(VOYAGE_EMBEDDINGS_URL, {
         method: 'POST',
         headers: {
@@ -282,17 +289,18 @@ export async function generarEmbeddings(textos, { inputType = 'document' } = {})
           input: lote,
           input_type: inputType,
           truncation: true
-        })
+        }),
+        signal: AbortSignal.timeout(TIMEOUT_EXTERNO_MS)
       });
 
-      if (respuesta.ok || respuesta.status !== 429 || intento === 4) break;
-      await respuesta.text().catch(() => '');
+      if (respuesta.ok || respuesta.status !== 429 || intento === 2) break;
+      detalleError = (await respuesta.text().catch(() => '')).slice(0, 500);
       const reintentar = Number.parseInt(respuesta.headers.get('retry-after'), 10);
       const espera = Number.isFinite(reintentar) && reintentar > 0 ? reintentar * 1000 : 20000;
       await new Promise((resolver) => setTimeout(resolver, Math.min(espera, 60000)));
     }
 
-    if (!respuesta.ok) throw await errorDeRespuesta('Voyage AI', respuesta);
+    if (!respuesta.ok) throw await errorDeRespuesta('Voyage AI', respuesta, detalleError);
 
     const datos = await respuesta.json();
     const items = datos.data ?? datos.embeddings ?? [];
@@ -335,9 +343,13 @@ export function asegurarEsquema() {
           titulo TEXT,
           contenido TEXT NOT NULL,
           embedding vector(1024) NOT NULL,
+          chunk_index INTEGER,
           creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
         );
+        ALTER TABLE fragmentos_rag ADD COLUMN IF NOT EXISTS chunk_index INTEGER;
         CREATE INDEX IF NOT EXISTS fragmentos_rag_area_idx ON fragmentos_rag (area);
+        CREATE INDEX IF NOT EXISTS fragmentos_rag_embedding_idx
+          ON fragmentos_rag USING hnsw (embedding vector_cosine_ops);
       `)
       .then(() => undefined)
       .catch((error) => {
@@ -401,10 +413,10 @@ export async function guardarFragmentos({
     }
 
     const insercion = `
-      INSERT INTO fragmentos_rag
-        (empresa_id, area, documento_id, documento_nombre, documento_url, titulo, contenido, embedding)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector)
-    `;
+       INSERT INTO fragmentos_rag
+         (empresa_id, area, documento_id, documento_nombre, documento_url, titulo, contenido, embedding, chunk_index)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9)
+     `;
 
     for (let indice = 0; indice < fragmentos.length; indice += 1) {
       const fragmento = fragmentos[indice];
@@ -416,7 +428,8 @@ export async function guardarFragmentos({
         documento.url ?? null,
         fragmento.titulo ?? null,
         fragmento.contenido,
-        serializarVector(vectores[indice])
+        serializarVector(vectores[indice]),
+        fragmento.indice ?? indice
       ]);
     }
 
@@ -466,11 +479,18 @@ export async function buscarFragmentosPorSimilitud({
     FROM fragmentos_rag
     WHERE ($2::text IS NULL OR area = $2)
       AND ($3::text IS NULL OR empresa_id = $3)
+      AND 1 - (embedding <=> $1::vector) >= $5
     ORDER BY embedding <=> $1::vector ASC
     LIMIT $4
   `;
 
-  const { rows } = await pool.query(consulta, [vector, areaFiltro, empresaFiltro, limite]);
+  const { rows } = await pool.query(consulta, [
+    vector,
+    areaFiltro,
+    empresaFiltro,
+    limite,
+    UMBRAL_SIMILITUD
+  ]);
   return rows;
 }
 

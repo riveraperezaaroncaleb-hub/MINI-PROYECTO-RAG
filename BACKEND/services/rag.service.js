@@ -3,6 +3,10 @@
 const { resumirFragmentos } = require('./llm.service');
 const { buscarFragmentosLocales } = require('./buscador.local.service');
 
+const SIN_RESPALDO =
+  'Esa política o información no consta en los documentos disponibles. Consulta con Recursos Humanos (RRHH) para obtener una respuesta oficial.';
+const MARCADOR_SIN_RESPALDO = /no encontr[eé] información|no consta|sin respaldo/i;
+
 let buscador = buscarFragmentosLocales;
 
 function configurarBuscadorRag(funcion) {
@@ -85,7 +89,7 @@ async function buscarEnRag(pregunta) {
     resultado = await buscador(pregunta);
   } catch (error) {
     registrarFalloRAG('BUSCADOR', error);
-    return { texto: 'No encontré información en los documentos.', citas: [] };
+    return { texto: SIN_RESPALDO, citas: [] };
   }
 
   let fragmentos;
@@ -93,11 +97,11 @@ async function buscarEnRag(pregunta) {
     fragmentos = normalizarFragmentos(resultado);
   } catch (error) {
     registrarFalloRAG('FORMATO', error);
-    return { texto: 'No encontré información en los documentos.', citas: [] };
+    return { texto: SIN_RESPALDO, citas: [] };
   }
 
   if (fragmentos.length === 0) {
-    return { texto: 'No encontré información en los documentos.', citas: [] };
+    return { texto: SIN_RESPALDO, citas: [] };
   }
 
   let texto;
@@ -109,6 +113,10 @@ async function buscarEnRag(pregunta) {
       .slice(0, 3)
       .map((fragmento) => `• ${fragmento.contenido} [${fragmento.documento || 'Documento RRHH'}]`)
       .join('\n');
+  }
+
+  if (MARCADOR_SIN_RESPALDO.test(String(texto))) {
+    return { texto: SIN_RESPALDO, citas: [] };
   }
 
   return { texto, citas: construirCitas(fragmentos) };

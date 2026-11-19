@@ -18,6 +18,17 @@ function construirPrompt(cifras) {
   );
 }
 
+function validarCifras(resumen, cifras) {
+  const permitidos = new Set(JSON.stringify(cifras).match(/\d+(?:\.\d+)?/g) ?? []);
+  const usados = resumen.match(/\d+(?:\.\d+)?/g) ?? [];
+
+  if (usados.some((numero) => !permitidos.has(numero))) {
+    throw new Error('El resumen incluye cifras que no aparecen en los datos reales.');
+  }
+
+  return resumen;
+}
+
 function extraerResumen(texto) {
   const inicio = texto.indexOf('{');
   const fin = texto.lastIndexOf('}');
@@ -47,7 +58,8 @@ async function llamarGemini(prompt) {
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: { temperature: 0, responseMimeType: 'application/json' }
-    })
+    }),
+    signal: AbortSignal.timeout(15000)
   });
 
   if (!respuesta.ok) {
@@ -74,7 +86,8 @@ async function llamarAnthropic(prompt) {
       max_tokens: 600,
       temperature: 0,
       messages: [{ role: 'user', content: prompt }]
-    })
+    }),
+    signal: AbortSignal.timeout(15000)
   });
 
   if (!respuesta.ok) {
@@ -98,7 +111,8 @@ async function llamarDeepSeek(prompt) {
       stream: false,
       response_format: { type: 'json_object' },
       messages: [{ role: 'user', content: prompt }]
-    })
+    }),
+    signal: AbortSignal.timeout(15000)
   });
 
   if (!respuesta.ok) {
@@ -120,7 +134,7 @@ async function generarResumen(cifras) {
         ? await llamarAnthropic(prompt)
         : await llamarDeepSeek(prompt);
 
-  return extraerResumen(texto);
+  return validarCifras(extraerResumen(texto), cifras);
 }
 
 module.exports = { generarResumen };

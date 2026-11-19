@@ -7,6 +7,7 @@ import {
   generarEmbeddings,
   leerMarkdownDeGoogleDrive
 } from './ingestaService.js';
+import { superaUmbral } from '../config/rag.js';
 
 const { Pool } = pg;
 
@@ -215,20 +216,56 @@ export async function guardarFragmentosLocales({ documento, fragmentos, embeddin
   };
 }
 
+export async function guardarTodosLocales(items) {
+  const datos = {};
+
+  for (const { documento, fragmentos, embeddings } of items) {
+    if (embeddings.length !== fragmentos.length) {
+      throw new Error('La cantidad de embeddings no coincide con la cantidad de fragmentos.');
+    }
+
+    datos[String(documento.id)] = {
+      canal: documento.canal,
+      documento_nombre: documento.nombre,
+      documento_url: documento.url ?? null,
+      chunks: fragmentos.map((fragmento, indice) => ({
+        titulo: fragmento.titulo ?? null,
+        chunk_index: fragmento.indice ?? indice,
+        contenido: fragmento.contenido,
+        embedding: embeddings[indice]
+      }))
+    };
+  }
+
+  await escribirAlmacenLocal(datos);
+
+  return items.map(({ documento, fragmentos }) => ({
+    doc_id: documento.id,
+    canal: documento.canal,
+    documento: documento.nombre,
+    chunks: fragmentos.length,
+    almacen: 'local'
+  }));
+}
+
 export async function buscarFragmentosLocales(embedding, topK = 5) {
   const datos = await leerAlmacenLocal();
   const filas = [];
 
   for (const [clave, documento] of Object.entries(datos)) {
     for (const chunk of documento.chunks ?? []) {
+      const similitud = similitudCoseno(embedding, chunk.embedding);
+      if (!superaUmbral(similitud)) continue;
+
       filas.push({
         doc_id: Number(clave),
         canal: documento.canal,
         documento_nombre: documento.documento_nombre,
         documento_url: documento.documento_url,
         titulo: chunk.titulo,
+        chunk_index: chunk.chunk_index ?? null,
         contenido: chunk.contenido,
-        similitud: similitudCoseno(embedding, chunk.embedding)
+        similitud
       });
     }
   }
@@ -259,11 +296,8 @@ export function asegurarEsquemaDocumentos() {
           actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
           PRIMARY KEY (doc_id, chunk_index)
         );
-        DO $index$ BEGIN
-          CREATE INDEX IF NOT EXISTS documentos_voyage_embedding_idx
-            ON documentos_voyage USING hnsw (embedding vector_cosine_ops);
-        EXCEPTION WHEN OTHERS THEN NULL;
-        END $index$;
+        CREATE INDEX IF NOT EXISTS documentos_voyage_embedding_idx
+          ON documentos_voyage USING hnsw (embedding vector_cosine_ops);
       `)
       .then(() => undefined)
       .catch(() => {
@@ -291,6 +325,31 @@ export async function guardarFragmentosDocumento({ documento, fragmentos, embedd
     return guardarFragmentosLocales({ documento, fragmentos, embeddings: vectores });
   }
 
+  let cliente;
+  try {
+    cliente = await pool.connect();
+    await cliente.query('BEGIN');
+    await insertarDocumentoEnCliente(cliente, { documento, fragmentos, embeddings: vectores });
+    await cliente.query('COMMIT');
+  } catch (error) {
+    if (cliente) await cliente.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    cliente?.release();
+  }
+
+  return {
+    doc_id: documento.id,
+    canal: documento.canal,
+    documento: documento.nombre,
+    chunks: fragmentos.length,
+    almacen: 'pgvector'
+  };
+}
+
+async function insertarDocumentoEnCliente(cliente, { documento, fragmentos, embeddings }) {
+  await cliente.query('DELETE FROM documentos_voyage WHERE doc_id = $1', [documento.id]);
+
   const insercion = `
     INSERT INTO documentos_voyage
       (doc_id, canal, chunk_index, documento_nombre, documento_url, titulo, contenido, embedding, actualizado_en)
@@ -305,42 +364,19 @@ export async function guardarFragmentosDocumento({ documento, fragmentos, embedd
       actualizado_en = now()
   `;
 
-  let cliente;
-  try {
-    cliente = await pool.connect();
-    await cliente.query('BEGIN');
-    await cliente.query('DELETE FROM documentos_voyage WHERE doc_id = $1', [documento.id]);
-
-    for (let indice = 0; indice < fragmentos.length; indice += 1) {
-      const fragmento = fragmentos[indice];
-      await cliente.query(insercion, [
-        documento.id,
-        documento.canal,
-        indice,
-        documento.nombre,
-        documento.url ?? null,
-        fragmento.titulo ?? null,
-        fragmento.contenido,
-        serializarVectorDocumento(vectores[indice])
-      ]);
-    }
-
-    await cliente.query('COMMIT');
-  } catch {
-    if (cliente) await cliente.query('ROLLBACK').catch(() => {});
-    modoLocal = true;
-    return guardarFragmentosLocales({ documento, fragmentos, embeddings: vectores });
-  } finally {
-    cliente?.release();
+  for (let indice = 0; indice < fragmentos.length; indice += 1) {
+    const fragmento = fragmentos[indice];
+    await cliente.query(insercion, [
+      documento.id,
+      documento.canal,
+      indice,
+      documento.nombre,
+      documento.url ?? null,
+      fragmento.titulo ?? null,
+      fragmento.contenido,
+      serializarVectorDocumento(embeddings[indice])
+    ]);
   }
-
-  return {
-    doc_id: documento.id,
-    canal: documento.canal,
-    documento: documento.nombre,
-    chunks: fragmentos.length,
-    almacen: 'pgvector'
-  };
 }
 
 export async function sincronizarDocumento(documento, opciones = {}) {
@@ -357,72 +393,62 @@ export async function sincronizarDocumento(documento, opciones = {}) {
 export async function sincronizarDocumentos(configuracion, opciones = {}) {
   const documentos = obtenerDocumentos(configuracion);
   const preparados = [];
-  const resultados = [];
 
   for (const documento of documentos) {
+    const leido = await leerDocumento(documento);
+    const fragmentos = fragmentarDocumento(leido.contenido, opciones);
+    preparados.push({ documento: leido, fragmentos });
+  }
+
+  const embeddings = await generarEmbeddings(
+    preparados.flatMap((item) => item.fragmentos.map((fragmento) => fragmento.contenido)),
+    { inputType: 'document' }
+  );
+
+  let cursor = 0;
+  const items = preparados.map((item) => {
+    const vectores = embeddings.slice(cursor, cursor + item.fragmentos.length);
+    cursor += item.fragmentos.length;
+    return { ...item, embeddings: vectores };
+  });
+
+  await asegurarEsquemaDocumentos();
+
+  let resultados;
+  if (modoLocal) {
+    resultados = await guardarTodosLocales(items);
+  } else {
+    let cliente;
     try {
-      const leido = await leerDocumento(documento);
-      const fragmentos = fragmentarDocumento(leido.contenido, opciones);
-      preparados.push({ documento: leido, fragmentos });
-    } catch (error) {
-      resultados.push({
-        doc_id: documento.id,
-        canal: documento.canal,
-        estado: 'error',
-        error: error.message
-      });
-    }
-  }
-
-  let embeddings = [];
-  try {
-    embeddings = await generarEmbeddings(
-      preparados.flatMap((item) => item.fragmentos.map((fragmento) => fragmento.contenido)),
-      { inputType: 'document' }
-    );
-  } catch (error) {
-    for (const item of preparados) {
-      resultados.push({
-        doc_id: item.documento.id,
-        canal: item.documento.canal,
-        estado: 'error',
-        error: error.message
-      });
-    }
-  }
-
-  if (embeddings.length) {
-    let cursor = 0;
-    for (const item of preparados) {
-      const vectores = embeddings.slice(cursor, cursor + item.fragmentos.length);
-      cursor += item.fragmentos.length;
-
-      try {
-        const sincronizado = await guardarFragmentosDocumento({
-          documento: item.documento,
-          fragmentos: item.fragmentos,
-          embeddings: vectores
-        });
-        resultados.push({ ...sincronizado, estado: 'ok' });
-      } catch (error) {
-        resultados.push({
-          doc_id: item.documento.id,
-          canal: item.documento.canal,
-          estado: 'error',
-          error: error.message
-        });
+      cliente = await pool.connect();
+      await cliente.query('BEGIN');
+      for (const item of items) {
+        await insertarDocumentoEnCliente(cliente, item);
       }
+      await cliente.query('COMMIT');
+    } catch (error) {
+      if (cliente) await cliente.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      cliente?.release();
     }
+
+    resultados = items.map(({ documento, fragmentos }) => ({
+      doc_id: documento.id,
+      canal: documento.canal,
+      documento: documento.nombre,
+      chunks: fragmentos.length,
+      almacen: 'pgvector'
+    }));
   }
 
   resultados.sort((a, b) => a.doc_id - b.doc_id);
-  const fallidos = resultados.filter((resultado) => resultado.estado === 'error').length;
 
   return {
     total: resultados.length,
-    procesados: resultados.length - fallidos,
-    fallidos,
-    resultados
+    procesados: resultados.length,
+    fallidos: 0,
+    resultados: resultados.map((resultado) => ({ ...resultado, estado: 'ok' }))
   };
 }
 

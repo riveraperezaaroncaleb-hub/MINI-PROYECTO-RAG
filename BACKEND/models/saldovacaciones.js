@@ -47,7 +47,8 @@ module.exports = (sequelize, DataTypes) => {
     sequelize,
     modelName: 'SaldoVacaciones',
     tableName: 'saldos_vacaciones',
-    timestamps: false
+    timestamps: false,
+    indexes: [{ unique: true, fields: ['colaborador_id', 'periodo'] }]
   });
 
   return SaldoVacaciones;

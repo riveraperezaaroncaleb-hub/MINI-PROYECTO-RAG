@@ -64,10 +64,10 @@ async function tendencia(req, res, next) {
       .reverse()
       .map((reporte) => ({
         fecha: reporte.fecha,
-        ausencias: valor(reporte.datos_json, ['ausentesHoy', 'total']),
+        ausencias: valor(reporte.datos_json, ['ausenciasDelDia', 'total'], valor(reporte.datos_json, ['ausentesHoy', 'total'])),
         pendientes: valor(reporte.datos_json, ['solicitudesPendientes', 'total']),
-        incapacidades: valor(reporte.datos_json, ['incapacidades', 'activas']),
-        rotacion: valor(reporte.datos_json, ['movimientos', 'rotacionPorcentaje'])
+        incapacidades: valor(reporte.datos_json, ['incapacidadesActivas', 'activas'], valor(reporte.datos_json, ['incapacidades', 'activas'])),
+        rotacion: valor(reporte.datos_json, ['movimientosRecientes', 'rotacionPorcentaje'], valor(reporte.datos_json, ['movimientos', 'rotacionPorcentaje']))
       }));
 
     return res.json(datos);

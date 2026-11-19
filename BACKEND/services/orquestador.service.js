@@ -23,8 +23,17 @@ function respuesta(intencion, texto, citas, agente, resuelta, escalada) {
   return { intencion, respuesta: texto, citas, agente, resuelta, escalada };
 }
 
+const PATRON_RESTRINGIDO =
+  /(salario|sueldo|incapacidad|vacaciones|movimiento)\s+(de|del|de la)\s+\w|de\s+otros?\s+colaboradores?|datos\s+de\s+\w+/i;
+
+function esRestringida(pregunta) {
+  return PATRON_RESTRINGIDO.test(String(pregunta ?? ''));
+}
+
 async function orquestar({ pregunta, usuario }) {
-  const intencion = await clasificarIntencion(pregunta);
+  const intencion = esRestringida(pregunta)
+    ? 'RESTRINGIDA'
+    : await clasificarIntencion(pregunta);
   const agente = ETIQUETAS_AGENTE[intencion] || 'orquestador';
 
   if (intencion === 'RESTRINGIDA') {
@@ -37,7 +46,8 @@ async function orquestar({ pregunta, usuario }) {
 
   if (intencion === 'POLITICA') {
     const politicas = await agentes.politicas.responder({ pregunta });
-    return respuesta(intencion, politicas.texto, politicas.citas, agente, true, false);
+    const citas = politicas.citas ?? [];
+    return respuesta(intencion, politicas.texto, citas, agente, citas.length > 0, false);
   }
 
   if (intencion === 'DATO_PERSONAL') {
@@ -50,12 +60,15 @@ async function orquestar({ pregunta, usuario }) {
     agentes.datos.responder({ usuario })
   ]);
 
+  const texto = `${politicas.texto}\n\nTus datos registrados:\n${datos.texto}`;
+  const resuelta = (politicas.citas?.length ?? 0) > 0 || (datos.citas?.length ?? 0) > 0;
+
   return respuesta(
     intencion,
-    `${politicas.texto}\n\nTus datos registrados:\n${datos.texto}`,
-    politicas.citas,
+    texto,
+    [...(politicas.citas ?? []), ...(datos.citas ?? [])],
     agente,
-    true,
+    resuelta,
     false
   );
 }

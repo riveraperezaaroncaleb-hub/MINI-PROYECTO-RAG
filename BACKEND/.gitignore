@@ -1,6 +1,10 @@
 node_modules/
 .env
 credentials/
+**/*service-account*.json
+**/*google*credentials*.json
+**/*oauth*.json
+**/token*.json
 dist/
 *.log
 .DS_Store

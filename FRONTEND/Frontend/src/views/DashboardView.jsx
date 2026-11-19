@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import CollaboratorReports from '../components/dashboard/CollaboratorReports'
 import ExecutiveSummary from '../components/dashboard/ExecutiveSummary'
 import KpiCard from '../components/dashboard/KpiCard'
 import PendingTable from '../components/dashboard/PendingTable'
@@ -23,6 +24,7 @@ export default function DashboardView() {
   const [tendencia, setTendencia] = useState([])
   const [solicitudes, setSolicitudes] = useState([])
   const [historial, setHistorial] = useState([])
+  const [colaboradorSeleccionado, setColaboradorSeleccionado] = useState(null)
 
   useEffect(() => {
     let activo = true
@@ -45,6 +47,7 @@ export default function DashboardView() {
         setCifras(actual?.datos_json || null)
         setResumen(actual?.resumen_texto || '')
         setReporteActivoId(actual?.id || null)
+        setColaboradorSeleccionado(null)
         setTendencia(serie)
         setSolicitudes(pendientes)
         setHistorial(reportes)
@@ -68,6 +71,7 @@ export default function DashboardView() {
       setCifras(seleccionado.datos_json || null)
       setResumen(seleccionado.resumen_texto || '')
       setReporteActivoId(seleccionado.id)
+      setColaboradorSeleccionado(null)
     } catch {
       setError('No se pudo cargar el reporte seleccionado.')
     }
@@ -84,17 +88,25 @@ export default function DashboardView() {
 
   if (cargando) return <Spinner label="Cargando dashboard…" />
 
-  const rotacion = cifras?.movimientos?.rotacionPorcentaje
+  const rotacion =
+    cifras?.movimientosRecientes?.rotacionPorcentaje ?? cifras?.movimientos?.rotacionPorcentaje
 
   const kpis = [
-    { titulo: 'Ausencias de hoy', valor: cifras?.ausentesHoy?.total ?? '—' },
+    {
+      titulo: 'Ausencias de hoy',
+      valor: cifras?.ausenciasDelDia?.total ?? cifras?.ausentesHoy?.total ?? '—',
+    },
     {
       titulo: 'Solicitudes pendientes',
       valor: cifras?.solicitudesPendientes?.total ?? solicitudes.length,
     },
-    { titulo: 'Incapacidades', valor: cifras?.incapacidades?.activas ?? '—' },
     {
-      titulo: 'Rotación mensual',
+      titulo: 'Incapacidades',
+      valor:
+        cifras?.incapacidadesActivas?.activas ?? cifras?.incapacidades?.activas ?? '—',
+    },
+    {
+      titulo: 'Rotación reciente',
       valor: rotacion == null ? '—' : Number(rotacion).toFixed(1),
       sufijo: rotacion == null ? '' : '%',
     },
@@ -120,6 +132,12 @@ export default function DashboardView() {
       </section>
 
       <ExecutiveSummary resumen={resumen} fecha={reporte?.fecha} />
+
+      <CollaboratorReports
+        colaboradores={cifras?.porColaborador || []}
+        seleccionado={colaboradorSeleccionado}
+        onSeleccionar={setColaboradorSeleccionado}
+      />
 
       <section className="rounded-xl border border-slate-800 bg-slate-900 p-5">
         <h3 className="mb-4 font-semibold text-slate-100">Tendencia de los últimos 30 días</h3>

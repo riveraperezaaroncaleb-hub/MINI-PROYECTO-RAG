@@ -1,13 +1,16 @@
 import express from 'express';
 import { sincronizarDocumentos } from '../services/voyageDocsService.js';
-import { responderChat } from '../services/deepseekChatService.js';
+import { consultarRag } from '../services/ragService.js';
+import { iniciarCronFotoMatutina } from '../services/analistaService.js';
+
+iniciarCronFotoMatutina();
 
 const router = express.Router();
 
 async function sincronizar(req, res, next) {
   try {
     const resultado = await sincronizarDocumentos(req.body?.documentos ?? req.body?.configuracion);
-    const estado = resultado.fallidos === resultado.total ? 500 : resultado.fallidos > 0 ? 207 : 200;
+    const estado = resultado.fallidos > 0 ? 500 : 200;
     res.status(estado).json(resultado);
   } catch (error) {
     next(error);
@@ -24,8 +27,7 @@ async function chatear(req, res, next) {
       return;
     }
 
-    const resultado = await responderChat(pregunta, {
-      historial: cuerpo.historial,
+    const resultado = await consultarRag(pregunta, {
       topK: cuerpo.topK
     });
 

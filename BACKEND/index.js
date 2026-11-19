@@ -13,7 +13,18 @@ const { buscarFragmentosLocales } = require('./services/buscador.local.service')
 
 const app = express();
 
-app.use(cors());
+const origenesPermitidos = (process.env.FRONTEND_ORIGIN || 'http://localhost:5173')
+  .split(',')
+  .map((origen) => origen.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: origenesPermitidos,
+    methods: ['GET', 'POST', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+  })
+);
 app.use(express.json());
 
 async function cargarBuscadorRag() {
@@ -64,6 +75,28 @@ app.use('/api/solicitudes', require('./routes/solicitudes.routes'));
 
 app.use(rutaNoEncontrada);
 app.use(manejarErrores);
+
+const moduloIngesta = import(
+  pathToFileURL(path.resolve(__dirname, 'src/services/ingestaService.js')).href
+);
+const moduloDocumentos = import(
+  pathToFileURL(path.resolve(__dirname, 'src/services/voyageDocsService.js')).href
+);
+
+async function cerrarRecursos() {
+  await Promise.allSettled([
+    require('./models').sequelize.close(),
+    moduloIngesta.then((modulo) => modulo.cerrarConexion()),
+    moduloDocumentos.then((modulo) => modulo.cerrarConexionDocumentos())
+  ]);
+}
+
+process.on('SIGTERM', () => {
+  cerrarRecursos().finally(() => process.exit(0));
+});
+process.on('SIGINT', () => {
+  cerrarRecursos().finally(() => process.exit(0));
+});
 
 if (require.main === module) {
   iniciar().catch((error) => {

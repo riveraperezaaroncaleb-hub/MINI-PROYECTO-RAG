@@ -1,3 +1,6 @@
+
+
+
 'use strict';
 
 require('dotenv').config();
@@ -8,8 +11,13 @@ const base = {
   database: process.env.DB_NAME || 'Sistema_de_RRH',
   host: process.env.DB_HOST || '127.0.0.1',
   port: Number(process.env.DB_PORT) || 3306,
-  dialect: 'mysql'
+  dialect: 'mysql',
+  pool: { max: 10, min: 0, acquire: 30000, idle: 10000 }
 };
+
+if (process.env.NODE_ENV === 'production' && (!process.env.DB_USER || !process.env.DB_PASSWORD)) {
+  throw new Error('DB_USER y DB_PASSWORD son obligatorios en producción.');
+}
 
 module.exports = {
   development: { ...base },

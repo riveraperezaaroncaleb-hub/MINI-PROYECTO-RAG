@@ -36,7 +36,8 @@ async function completar(mensajes, { json = false } = {}) {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${API_KEY}`
     },
-    body: JSON.stringify(cuerpo)
+    body: JSON.stringify(cuerpo),
+    signal: AbortSignal.timeout(15000)
   });
 
   if (!respuesta.ok) {
@@ -62,7 +63,13 @@ async function clasificarIntencion(pregunta) {
 
   let datos;
   try {
-    datos = JSON.parse(contenido);
+    const limpio = contenido.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    const inicio = limpio.indexOf('{');
+    const fin = limpio.lastIndexOf('}');
+    if (inicio === -1 || fin <= inicio) {
+      throw new Error('Sin objeto JSON.');
+    }
+    datos = JSON.parse(limpio.slice(inicio, fin + 1));
   } catch {
     throw new Error('El clasificador devolvió una respuesta inválida.');
   }

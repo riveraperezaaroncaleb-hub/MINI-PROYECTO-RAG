@@ -38,7 +38,8 @@ module.exports = (sequelize, DataTypes) => {
     sequelize,
     modelName: 'ReporteDiario',
     tableName: 'reportes_diarios',
-    timestamps: false
+    timestamps: false,
+    indexes: [{ unique: true, fields: ['fecha'] }]
   });
 
   return ReporteDiario;
