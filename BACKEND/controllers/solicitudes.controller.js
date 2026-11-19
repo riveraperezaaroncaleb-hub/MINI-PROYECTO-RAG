@@ -39,7 +39,7 @@ async function actualizarEstado(req, res, next) {
       return next(crearError('Solicitud no encontrada.', 404));
     }
 
-    await solicitud.update({ estado, aprobador_id: req.user.id });
+    await solicitud.update({ estado, aprobador_id: req.user?.id ?? null });
     return res.json(solicitud);
   } catch (error) {
     return next(error);

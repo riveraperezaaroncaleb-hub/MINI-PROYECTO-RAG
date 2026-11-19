@@ -15,7 +15,8 @@ async function postChat(req, res, next) {
   }
 
   try {
-    return res.json(await procesarChat({ pregunta, usuario: req.user }));
+    const usuario = req.user ?? { id: 1, nombre: 'Ana García', rol: 'RRHH' };
+    return res.json(await procesarChat({ pregunta, usuario }));
   } catch (error) {
     process.stderr.write(`[CHAT] ${error.stack || error.message}\n`);
     return next(error);

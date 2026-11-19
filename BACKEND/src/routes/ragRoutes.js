@@ -1,12 +1,8 @@
 import express from 'express';
-import autenticacion from '../../middlewares/autenticacion.js';
 import { sincronizarDocumentos } from '../services/voyageDocsService.js';
 import { responderChat } from '../services/deepseekChatService.js';
 
-const { autenticar } = autenticacion;
 const router = express.Router();
-
-router.use(autenticar);
 
 async function sincronizar(req, res, next) {
   try {

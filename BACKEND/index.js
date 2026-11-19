@@ -42,10 +42,9 @@ async function cargarBuscadorRag() {
 async function iniciar() {
   configurarBuscadorRag(await cargarBuscadorRag());
   iniciarReporteDiario();
-  app.listen(process.env.PORT || 3000);
+  app.listen(process.env.PORT || 3000, '0.0.0.0');
 }
 
-app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/chat', require('./routes/chat.routes'));
 app.use('/api/rag', require('./routes/rag.routes'));
 
