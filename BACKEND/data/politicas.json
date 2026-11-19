@@ -1,0 +1,58 @@
+[
+  {
+    "id": 1,
+    "documento": "Política de Vacaciones y Ausencias.pdf",
+    "seccion": "Disfrute y solicitud",
+    "contenido": "Todo colaborador tiene derecho a 30 días hábiles de vacaciones por año. La solicitud debe radicarse con al menos 15 días hábiles de anticipación a través del portal de RRHH. El área debe responder en un máximo de 5 días hábiles.",
+    "enlace": ""
+  },
+  {
+    "id": 2,
+    "documento": "Política de Vacaciones y Ausencias.pdf",
+    "seccion": "Acumulación",
+    "contenido": "Se pueden acumular hasta 5 días hábiles de vacaciones de un periodo al siguiente. El excedente se pierde si no se disfruta dentro de los seis meses posteriores al cierre del año.",
+    "enlace": ""
+  },
+  {
+    "id": 3,
+    "documento": "Política de Incapacidades.pdf",
+    "seccion": "Reporte y plazos",
+    "contenido": "El colaborador debe informar cualquier incapacidad a RRHH dentro de las 48 horas siguientes al inicio de la ausencia y aportar el certificado médico expedido por la EPS. Las incapacidades superiores a 3 días requieren validación del área de salud ocupacional.",
+    "enlace": ""
+  },
+  {
+    "id": 4,
+    "documento": "Política de Trabajo Remoto.pdf",
+    "seccion": "Elegibilidad",
+    "contenido": "El trabajo remoto está disponible hasta 2 días por semana para puestos elegibles, previa aprobación del jefe directo. El colaborador debe garantizar conectividad, disponibilidad en horario laboral y el uso de la VPN corporativa.",
+    "enlace": ""
+  },
+  {
+    "id": 5,
+    "documento": "Reglamento Interno de Trabajo.pdf",
+    "seccion": "Jornada laboral",
+    "contenido": "La jornada ordinaria es de 40 horas semanales, de lunes a viernes, con horario flexible de entrada entre las 07:00 y las 09:00. El tiempo de almuerzo es de una hora y no se computa dentro de la jornada.",
+    "enlace": ""
+  },
+  {
+    "id": 6,
+    "documento": "Código de Conducta y Ética.pdf",
+    "seccion": "Confidencialidad",
+    "contenido": "Está prohibido compartir información confidencial de la institución, de colaboradores o de clientes fuera de los canales autorizados. Las denuncias pueden presentarse de forma anónima a través del canal de ética corporativo.",
+    "enlace": ""
+  },
+  {
+    "id": 7,
+    "documento": "Política de Viajes y Viáticos.pdf",
+    "seccion": "Comprobación",
+    "contenido": "Los viáticos se liquidan dentro de los 15 días hábiles posteriores al viaje. Es obligatorio adjuntar las facturas originales y el informe de actividades; los montos sin comprobante no se reembolsan.",
+    "enlace": ""
+  },
+  {
+    "id": 8,
+    "documento": "Política de Capacitación.pdf",
+    "seccion": "Beneficio de estudio",
+    "contenido": "La institución financiera hasta el 80% de los costos de formación superior o certificaciones técnicas relacionadas con el cargo, con un tope anual por colaborador. El beneficio requiere compromiso de permanencia de 12 meses.",
+    "enlace": ""
+  }
+]

@@ -1,0 +1,46 @@
+{
+  "1": {
+    "saldos": [
+      { "periodo": "2026", "dias_asignados": 30, "dias_tomados": 8, "dias_disponibles": 22 },
+      { "periodo": "2025", "dias_asignados": 30, "dias_tomados": 30, "dias_disponibles": 0 }
+    ],
+    "solicitudes": [
+      { "tipo": "Vacaciones", "fecha_inicio": "2026-07-10", "fecha_fin": "2026-07-17", "estado": "Aprobada" },
+      { "tipo": "Permiso", "fecha_inicio": "2026-05-04", "fecha_fin": "2026-05-04", "estado": "Aprobada" }
+    ],
+    "incapacidades": [
+      { "tipo": "Enfermedad", "fecha_inicio": "2026-03-12", "dias": 2, "entidad": "EPS Sur" }
+    ],
+    "movimientos": [
+      { "tipo": "Ascenso", "fecha": "2026-01-15", "motivo": "Promoción a analista senior" }
+    ]
+  },
+  "2": {
+    "saldos": [
+      { "periodo": "2026", "dias_asignados": 30, "dias_tomados": 12, "dias_disponibles": 18 }
+    ],
+    "solicitudes": [
+      { "tipo": "Vacaciones", "fecha_inicio": "2026-08-03", "fecha_fin": "2026-08-14", "estado": "Pendiente" }
+    ],
+    "incapacidades": [],
+    "movimientos": []
+  },
+  "3": {
+    "saldos": [
+      { "periodo": "2026", "dias_asignados": 30, "dias_tomados": 5, "dias_disponibles": 25 }
+    ],
+    "solicitudes": [],
+    "incapacidades": [
+      { "tipo": "Control médico", "fecha_inicio": "2026-06-01", "dias": 1, "entidad": "IPS Central" }
+    ],
+    "movimientos": [
+      { "tipo": "Cambio de área", "fecha": "2026-04-20", "motivo": "Traslado a Ingeniería" }
+    ]
+  },
+  "_resumen": {
+    "colaboradores": 52,
+    "solicitudes": 137,
+    "incapacidades": 24,
+    "diasDisponibles": 1043
+  }
+}

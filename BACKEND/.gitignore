@@ -1,0 +1,8 @@
+node_modules/
+.env
+credentials/
+dist/
+*.log
+.DS_Store
+data/consultas_chat.json
+data/voyage_docs.json
